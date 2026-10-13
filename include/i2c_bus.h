@@ -10,4 +10,6 @@ namespace I2CBus {
   bool deselectAll();
   // Prints every responding address on each mux channel to Serial.
   void scan();
+  // Human-readable text for a Wire.endTransmission() result code.
+  const char* errStr(uint8_t code);
 }

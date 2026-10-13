@@ -9,7 +9,9 @@ namespace {
   bool writeMux(uint8_t mask) {
     Wire.beginTransmission(MUX_ADDR);
     Wire.write(mask);
-    return Wire.endTransmission() == 0;
+    uint8_t err = Wire.endTransmission();
+    if (err) Serial.printf("[i2c] mux write 0x%02X failed: %s\n", mask, I2CBus::errStr(err));
+    return err == 0;
   }
 
   bool probe(uint8_t addr) {
@@ -20,11 +22,28 @@ namespace {
 
 namespace I2CBus {
 
+const char* errStr(uint8_t code) {
+  switch (code) {
+    case 0: return "ok";
+    case 1: return "data too long for Wire buffer";
+    case 2: return "NACK on address (device missing / wrong address / mux channel off)";
+    case 3: return "NACK on data";
+    case 4: return "other error (bus stuck? check pull-ups and wiring)";
+    case 5: return "timeout (SDA/SCL held low? check wiring and pull-ups)";
+    default: return "unknown";
+  }
+}
+
 void begin() {
   // A full SH1106 page (control bytes + 128 data bytes) must fit in one
   // transaction; the default 128-byte Wire buffer is too small.
-  Wire.setBufferSize(256);
-  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_CLOCK_HZ);
+  size_t buf = Wire.setBufferSize(256);
+  Serial.printf("[i2c] Wire buffer: %u bytes%s\n", (unsigned)buf,
+                buf < 135 ? "  !! too small, flush will fail" : "");
+  bool ok = Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_CLOCK_HZ);
+  Serial.printf("[i2c] Wire.begin(SDA=%d, SCL=%d, %lu Hz): %s\n", PIN_I2C_SDA,
+                PIN_I2C_SCL, (unsigned long)I2C_CLOCK_HZ, ok ? "ok" : "FAILED");
+  Serial.printf("[i2c] actual clock: %lu Hz\n", (unsigned long)Wire.getClock());
   Wire.setTimeOut(20);
   current = NONE;
 }
@@ -32,6 +51,7 @@ void begin() {
 bool select(uint8_t channel) {
   if (channel == current) return true;
   if (!writeMux(1u << channel)) {
+    Serial.printf("[i2c] select channel %u failed\n", channel);
     current = NONE;
     return false;
   }

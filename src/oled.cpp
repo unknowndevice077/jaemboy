@@ -7,9 +7,20 @@ Oled::Oled(uint8_t muxChannel)
 
 bool Oled::begin() {
   if (!I2CBus::select(channel_)) return false;
+  Wire.beginTransmission(OLED_I2C_ADDR);
+  uint8_t err = Wire.endTransmission();
+  if (err) {
+    Serial.printf("[oled ch%u] no reply at 0x%02X: %s\n", channel_, OLED_I2C_ADDR,
+                  I2CBus::errStr(err));
+    return false;
+  }
+  Serial.printf("[oled ch%u] found at 0x%02X, sending init\n", channel_, OLED_I2C_ADDR);
   u8g2_.setI2CAddress(OLED_I2C_ADDR << 1);  // U8g2 wants the 8-bit form
   u8g2_.setBusClock(I2C_CLOCK_HZ);
-  if (!u8g2_.begin()) return false;
+  if (!u8g2_.begin()) {
+    Serial.printf("[oled ch%u] U8g2 begin failed\n", channel_);
+    return false;
+  }
   u8g2_.clearBuffer();
   return flush();
 }
@@ -29,7 +40,12 @@ bool Oled::flush() {
     Wire.write(0x80); Wire.write(0x10 | (col >> 4));
     Wire.write(0x40);  // the rest is display data
     Wire.write(buf + page * OLED_WIDTH, OLED_WIDTH);
-    if (Wire.endTransmission() != 0) ok = false;
+    uint8_t err = Wire.endTransmission();
+    if (err) {
+      Serial.printf("[oled ch%u] page %u write failed: %s\n", channel_, page,
+                    I2CBus::errStr(err));
+      ok = false;
+    }
   }
   return ok;
 }

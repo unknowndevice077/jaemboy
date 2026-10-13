@@ -44,6 +44,11 @@ void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(500);
   Serial.println(F("\nGAMEBOY phase 1: hardware bring-up"));
+  Serial.printf("[sys] chip %s rev %u, %u MHz, free heap %u\n", ESP.getChipModel(),
+                ESP.getChipRevision(), ESP.getCpuFreqMHz(), ESP.getFreeHeap());
+  Serial.printf("[cfg] OLED %dx%d, col offset %d, addr 0x%02X, mux 0x%02X ch %d/%d\n",
+                OLED_WIDTH, OLED_HEIGHT, OLED_COL_OFFSET, OLED_I2C_ADDR, MUX_ADDR,
+                MUX_CH_LAUNCH, MUX_CH_GAME);
 
   I2CBus::begin();
   I2CBus::scan();
@@ -56,6 +61,7 @@ void setup() {
   Serial.println(F("Expected: OLED 1 shows 'OLED 1 LAUNCH / mux ch 0',"));
   Serial.println(F("          OLED 2 shows 'OLED 2 GAME / mux ch 1'."));
   Serial.println(F("Send 's' to rescan."));
+  Serial.println(F("[sys] setup done"));
 }
 
 void loop() {
