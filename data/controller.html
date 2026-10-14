@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>GAMEBOY</title>
+<style>
+  * { box-sizing: border-box; -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; touch-action: none;
+               background: #1b1b22; color: #ddd; font-family: system-ui, sans-serif; }
+  #look-hint { position: fixed; left: 50%; top: 55%; transform: translate(-50%, -50%);
+               color: #ffffff22; font-size: 4vmin; pointer-events: none; text-align: center; }
+  .ctl { position: absolute; transform: translate(-50%, -50%); }
+  #dpad { display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr); aspect-ratio: 1; }
+  #dpad .dir { background: #3a3a48; border-radius: 8px; display: flex; align-items: center;
+               justify-content: center; color: #999; font-size: 0.9em; }
+  .round { aspect-ratio: 1; border-radius: 50%; background: #a8324a; display: flex;
+           align-items: center; justify-content: center; font-weight: bold; color: #fff9; }
+  .pill { aspect-ratio: 2; border-radius: 99px; background: #3a3a48; display: flex;
+          align-items: center; justify-content: center; color: #aaa; letter-spacing: .08em; }
+  .on { filter: brightness(1.7); }
+  #status { position: fixed; top: 2vmin; left: 50%; transform: translateX(-50%);
+            font-size: 3vmin; color: #888; }
+  #status.ok { color: #5c5; }
+  #edit-btn { position: fixed; top: 2vmin; left: 2vmin; padding: 1.2vmin 2.4vmin;
+              border-radius: 2vmin; background: #2c2c38; color: #aaa; font-size: 3vmin; }
+  /* edit mode */
+  body.editing .ctl { outline: 2px dashed #fff4; outline-offset: 4px; }
+  body.editing .ctl.sel { outline-color: #5c5; }
+  #toolbar { display: none; position: fixed; top: 2vmin; left: 50%; transform: translateX(-50%);
+             gap: 1.5vmin; align-items: center; background: #2c2c38; padding: 1.2vmin;
+             border-radius: 2vmin; font-size: 3vmin; z-index: 5; }
+  body.editing #toolbar { display: flex; }
+  body.editing #status, body.editing #edit-btn { display: none; }
+  #toolbar b { background: #444456; padding: 1vmin 2.2vmin; border-radius: 1.5vmin;
+               font-weight: normal; }
+  #rotate { display: none; position: fixed; inset: 0; background: #1b1b22; z-index: 9;
+            align-items: center; justify-content: center; font-size: 6vmin; }
+  @media (orientation: portrait) { #rotate { display: flex; } }
+</style>
+</head>
+<body>
+<div id="look-hint">drag here to look</div>
+
+<div class="ctl" id="dpad">
+  <div data-m="5"></div><div class="dir" data-m="1">&#9650;</div><div data-m="9"></div>
+  <div class="dir" data-m="4">&#9664;</div><div></div><div class="dir" data-m="8">&#9654;</div>
+  <div data-m="6"></div><div class="dir" data-m="2">&#9660;</div><div data-m="10"></div>
+</div>
+<div class="ctl round" id="a" data-m="16">A</div>
+<div class="ctl round" id="b" data-m="32">B</div>
+<div class="ctl pill" id="select" data-m="128">SELECT</div>
+<div class="ctl pill" id="start" data-m="64">START</div>
+
+<div id="status">connecting...</div>
+<div id="edit-btn">EDIT</div>
+<div id="toolbar">
+  <span>size</span><b data-act="size-">&minus;</b><b data-act="size+">+</b>
+  <span>look</span><b data-act="sens-">&minus;</b><span id="sens"></span><b data-act="sens+">+</b>
+  <b data-act="reset">reset</b><b data-act="done">done</b>
+</div>
+<div id="rotate">Rotate your phone</div>
+
+<script>
+// Wire format: [button mask, look delta (int8)].
+// Bits: 1 up, 2 down, 4 left, 8 right, 16 A, 32 B, 64 Start, 128 Select.
+// D-pad corners carry two bits.
+
+// ---- layout (x, y = centre in % of the screen, s = width in vmin) ----
+const DEFAULTS = {
+  dpad:   { x: 15, y: 66, s: 30 },
+  a:      { x: 90, y: 58, s: 13 },
+  b:      { x: 79, y: 76, s: 13 },
+  select: { x: 41, y: 90, s: 14 },
+  start:  { x: 59, y: 90, s: 14 },
+  sens:   1.0,
+};
+let layout = load();
+
+function load() {
+  try { return Object.assign(structuredClone(DEFAULTS), JSON.parse(localStorage.getItem('layout'))); }
+  catch (e) { return structuredClone(DEFAULTS); }
+}
+function save() { try { localStorage.setItem('layout', JSON.stringify(layout)); } catch (e) {} }
+
+function applyLayout() {
+  for (const id of ['dpad', 'a', 'b', 'select', 'start']) {
+    const el = document.getElementById(id), l = layout[id];
+    el.style.left = l.x + '%';
+    el.style.top = l.y + '%';
+    el.style.width = l.s + 'vmin';
+    el.style.fontSize = (l.s * (id === 'dpad' ? 0.18 : id.length > 1 ? 0.17 : 0.4)) + 'vmin';
+  }
+  document.getElementById('sens').textContent = layout.sens.toFixed(1);
+}
+applyLayout();
+
+// ---- connection ----
+let ws = null, mask = 0, look = 0, dirty = false;
+const status = document.getElementById('status');
+
+function connect() {
+  ws = new WebSocket('ws://' + location.host + '/ws');
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { status.textContent = 'connected'; status.className = 'ok'; dirty = true; };
+  ws.onclose = () => {
+    status.textContent = 'reconnecting...'; status.className = '';
+    setTimeout(connect, 1000);
+  };
+}
+
+// Button changes go out at once; look deltas are batched once per animation
+// frame so a fast swipe doesn't flood the socket.
+function flush() {
+  if (!ws || ws.readyState !== 1) return;
+  const d = Math.max(-127, Math.min(127, Math.trunc(look)));
+  look -= d;
+  ws.send(new Uint8Array([mask, d & 255]));
+  dirty = false;
+}
+(function tick() {
+  if (dirty || Math.abs(look) >= 1) flush();
+  requestAnimationFrame(tick);
+})();
+
+// ---- play mode touch handling ----
+const lookTouches = new Map();  // touch id -> last x, for touches that began on empty space
+let lit = [];
+
+function buttonAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el && el.closest('[data-m]');
+}
+
+function setButtons(points) {
+  let m = 0;
+  const now = [];
+  for (const p of points) {
+    const b = buttonAt(p.clientX, p.clientY);
+    if (b) { m |= +b.dataset.m; now.push(b); }
+  }
+  lit.forEach(e => e.classList.remove('on'));
+  now.forEach(e => e.classList.add('on'));
+  lit = now;
+  if (m !== mask) {
+    mask = m;
+    flush();
+    if (navigator.vibrate && m) navigator.vibrate(10);
+  }
+}
+
+function onTouch(e) {
+  e.preventDefault();
+  if (editing) return editTouch(e);
+  for (const t of e.changedTouches) {
+    if (e.type === 'touchstart') {
+      if (t.target.closest('#edit-btn')) { startEdit(); return; }
+      if (!buttonAt(t.clientX, t.clientY)) lookTouches.set(t.identifier, t.clientX);
+    } else if (e.type === 'touchmove' && lookTouches.has(t.identifier)) {
+      look += (t.clientX - lookTouches.get(t.identifier)) * layout.sens;
+      lookTouches.set(t.identifier, t.clientX);
+    } else if (e.type === 'touchend' || e.type === 'touchcancel') {
+      lookTouches.delete(t.identifier);
+    }
+  }
+  setButtons([...e.touches].filter(t => !lookTouches.has(t.identifier)));
+}
+for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel'])
+  document.addEventListener(ev, onTouch, { passive: false });
+
+// Mouse, for testing on a laptop: click buttons, drag empty space to look.
+let mouse = null;
+document.addEventListener('mousedown', e => {
+  if (editing) return;
+  if (e.target.closest('#edit-btn')) return startEdit();
+  mouse = buttonAt(e.clientX, e.clientY) ? 'btn' : e.clientX;
+  if (mouse === 'btn') setButtons([e]);
+});
+document.addEventListener('mousemove', e => {
+  if (mouse === 'btn') setButtons([e]);
+  else if (mouse !== null) { look += (e.clientX - mouse) * layout.sens; mouse = e.clientX; }
+});
+document.addEventListener('mouseup', () => { mouse = null; setButtons([]); });
+
+// Never leave a button held when the page goes to the background.
+function releaseAll() { lookTouches.clear(); setButtons([]); }
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+window.addEventListener('blur', releaseAll);
+
+// ---- edit mode: drag controls to move, -/+ to resize the selected one ----
+let editing = false, selected = 'dpad', drag = null;
+
+function select(id) {
+  selected = id;
+  document.querySelectorAll('.ctl').forEach(el => el.classList.toggle('sel', el.id === id));
+}
+
+function startEdit() {
+  releaseAll();
+  editing = true;
+  document.body.classList.add('editing');
+  select(selected);
+}
+
+function toolbarAction(act) {
+  const l = layout[selected];
+  if (act === 'size-') l.s = Math.max(6, l.s - 2);
+  if (act === 'size+') l.s = Math.min(60, l.s + 2);
+  if (act === 'sens-') layout.sens = Math.max(0.2, +(layout.sens - 0.2).toFixed(1));
+  if (act === 'sens+') layout.sens = Math.min(4, +(layout.sens + 0.2).toFixed(1));
+  if (act === 'reset') { layout = structuredClone(DEFAULTS); select('dpad'); }
+  if (act === 'done') { editing = false; document.body.classList.remove('editing'); }
+  applyLayout();
+  save();
+}
+
+function editTouch(e) {
+  const t = e.changedTouches[0];
+  if (e.type === 'touchstart') {
+    const btn = t.target.closest('[data-act]');
+    if (btn) return toolbarAction(btn.dataset.act);
+    const ctl = t.target.closest('.ctl');
+    if (!ctl) return;
+    select(ctl.id);
+    const l = layout[ctl.id];
+    drag = { id: t.identifier, dx: l.x - t.clientX / innerWidth * 100,
+             dy: l.y - t.clientY / innerHeight * 100 };
+  } else if (e.type === 'touchmove' && drag) {
+    for (const m of e.changedTouches) {
+      if (m.identifier !== drag.id) continue;
+      const l = layout[selected];
+      l.x = Math.max(0, Math.min(100, m.clientX / innerWidth * 100 + drag.dx));
+      l.y = Math.max(0, Math.min(100, m.clientY / innerHeight * 100 + drag.dy));
+      applyLayout();
+    }
+  } else if (drag) {
+    drag = null;
+    save();
+  }
+}
+
+connect();
+</script>
+</body>
+</html>

@@ -59,6 +59,37 @@ bool select(uint8_t channel) {
   return true;
 }
 
+void clearBus() {
+  Wire.end();
+  pinMode(PIN_I2C_SDA, INPUT_PULLUP);
+  pinMode(PIN_I2C_SCL, INPUT_PULLUP);
+  delayMicroseconds(10);
+  Serial.printf("[i2c] bus clear: SDA=%d SCL=%d before", digitalRead(PIN_I2C_SDA),
+                digitalRead(PIN_I2C_SCL));
+  pinMode(PIN_I2C_SCL, OUTPUT_OPEN_DRAIN);
+  for (int i = 0; i < 9; i++) {
+    digitalWrite(PIN_I2C_SCL, LOW);  delayMicroseconds(5);
+    digitalWrite(PIN_I2C_SCL, HIGH); delayMicroseconds(5);
+  }
+  // START then STOP (SDA falls, then rises, while SCL is high) resets the
+  // slave's protocol state machine.
+  pinMode(PIN_I2C_SDA, OUTPUT_OPEN_DRAIN);
+  digitalWrite(PIN_I2C_SDA, LOW);  delayMicroseconds(5);
+  digitalWrite(PIN_I2C_SDA, HIGH); delayMicroseconds(5);
+  pinMode(PIN_I2C_SDA, INPUT_PULLUP);
+  pinMode(PIN_I2C_SCL, INPUT_PULLUP);
+  Serial.printf(", SDA=%d SCL=%d after\n", digitalRead(PIN_I2C_SDA), digitalRead(PIN_I2C_SCL));
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, I2C_CLOCK_HZ);
+  Wire.setTimeOut(20);
+}
+
+void invalidate() { current = NONE; }
+
+int readMux() {
+  if (Wire.requestFrom((uint8_t)MUX_ADDR, (uint8_t)1) != 1) return -1;
+  return Wire.read();
+}
+
 bool deselectAll() {
   bool ok = writeMux(0);
   current = ok ? 0xFE : NONE;  // 0xFE = "no channel", distinct from any 0..7

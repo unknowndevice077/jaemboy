@@ -26,6 +26,27 @@ bool Oled::begin() {
 }
 
 bool Oled::flush() {
+  if (writePages()) return true;
+  // A write failed. Log the mux state, free the bus in case the panel is
+  // stuck mid-transfer, re-init the panel and retry once.
+  int reg = I2CBus::readMux();
+  Serial.printf("[oled ch%u] flush failed, mux register = 0x%02X%s\n", channel_, reg,
+                reg < 0 ? " (read failed)" : "");
+  I2CBus::clearBus();
+  I2CBus::invalidate();
+  if (!I2CBus::select(channel_)) return false;
+  Wire.beginTransmission(OLED_I2C_ADDR);
+  uint8_t err = Wire.endTransmission();
+  Serial.printf("[oled ch%u] after bus clear: %s\n", channel_, I2CBus::errStr(err));
+  if (err) return false;
+  u8g2_.initDisplay();  // the panel may have lost its state; resend init
+  u8g2_.setPowerSave(0);
+  bool ok = writePages();
+  Serial.printf("[oled ch%u] retry %s\n", channel_, ok ? "ok" : "FAILED");
+  return ok;
+}
+
+bool Oled::writePages() {
   if (!I2CBus::select(channel_)) return false;
   const uint8_t* buf = u8g2_.getBufferPtr();
   constexpr uint8_t col = OLED_COL_OFFSET;

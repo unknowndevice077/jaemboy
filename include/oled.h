@@ -14,6 +14,7 @@ class Oled {
   uint8_t channel() const { return channel_; }
 
  private:
+  bool writePages();
   OLED_U8G2_CLASS u8g2_;
   uint8_t channel_;
 };
